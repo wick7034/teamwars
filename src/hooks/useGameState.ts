@@ -4,16 +4,12 @@ import type { GameState, Player, Tile, ChatMessage } from '../types/game';
 
 export const useGameState = () => {
   const [gameState, setGameState] = useState<GameState>({
-    tiles: Array(100).fill(null).map((_, index) => ({
-      id: index,
-      ownedBy: null,
-      claimedAt: null,
-    })),
-    players: [],
+    tiles: {},
+    players: {},
     chatMessages: [],
-    gameStartTime: null,
-    gameEndTime: null,
-    isActive: false,
+    gameStartTime: Date.now(),
+    gameEndTime: Date.now() + (72 * 60 * 60 * 1000), // 72 hours from now
+    gameId: 'game-2025-01',
   });
 
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
@@ -22,7 +18,7 @@ export const useGameState = () => {
   useEffect(() => {
     const channel = supabase
       .channel('game-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tiles' }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'game_tiles' }, () => {
         fetchGameState();
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'players' }, () => {
@@ -40,42 +36,51 @@ export const useGameState = () => {
 
   const fetchGameState = useCallback(async () => {
     try {
-      // Fetch tiles
-      const { data: tiles } = await supabase
-        .from('tiles')
+      // Fetch game tiles
+      const { data: gameTiles } = await supabase
+        .from('game_tiles')
         .select('*')
-        .order('id');
+        .eq('game_id', 'game-2025-01');
 
       // Fetch players
       const { data: players } = await supabase
         .from('players')
-        .select('*');
-
-      // Fetch game settings
-      const { data: gameSettings } = await supabase
-        .from('game_settings')
         .select('*')
+        .eq('game_id', 'game-2025-01');
+
+      // Fetch game info
+      const { data: games } = await supabase
+        .from('games')
+        .select('*')
+        .eq('id', 'game-2025-01')
         .single();
 
-      if (tiles && players && gameSettings) {
+      if (players) {
         setGameState(prev => ({
           ...prev,
-          tiles: tiles.map(tile => ({
-            id: tile.id,
-            ownedBy: tile.owned_by,
-            claimedAt: tile.claimed_at ? new Date(tile.claimed_at) : null,
-          })),
-          players: players.map(player => ({
-            id: player.id,
-            name: player.name,
-            team: player.team,
-            actionsRemaining: player.actions_remaining,
-            lastActionTime: player.last_action_time ? new Date(player.last_action_time) : null,
-            isOnline: player.is_online,
-          })),
-          gameStartTime: gameSettings.start_time ? new Date(gameSettings.start_time) : null,
-          gameEndTime: gameSettings.end_time ? new Date(gameSettings.end_time) : null,
-          isActive: gameSettings.is_active,
+          tiles: gameTiles ? gameTiles.reduce((acc, tile) => {
+            acc[`${tile.x}-${tile.y}`] = {
+              x: tile.x,
+              y: tile.y,
+              owner: tile.owner as 'blue' | 'pink' | null,
+              claimedAt: tile.claimed_at ? new Date(tile.claimed_at).getTime() : undefined,
+              claimedBy: tile.claimed_by,
+            };
+            return acc;
+          }, {} as Record<string, GameTile>) : {},
+          players: players.reduce((acc, player) => {
+            acc[player.id] = {
+              id: player.id,
+              username: player.username,
+              team: player.team,
+              actionsRemaining: player.actions_remaining,
+              lastActionTime: player.last_action_time ? new Date(player.last_action_time).getTime() : Date.now(),
+              lastSeen: player.last_seen ? new Date(player.last_seen).getTime() : Date.now(),
+            };
+            return acc;
+          }, {} as Record<string, Player>),
+          gameStartTime: games?.start_time ? new Date(games.start_time).getTime() : Date.now(),
+          gameEndTime: games?.end_time ? new Date(games.end_time).getTime() : Date.now() + (72 * 60 * 60 * 1000),
         }));
       }
     } catch (error) {
@@ -87,11 +92,9 @@ export const useGameState = () => {
     try {
       const { data: messages } = await supabase
         .from('chat_messages')
-        .select(`
-          *,
-          players (name, team)
-        `)
-        .order('created_at', { ascending: true })
+        .select('id, username, team, message, timestamp')
+        .eq('game_id', 'game-2025-01')
+        .order('timestamp', { ascending: true })
         .limit(100);
 
       if (messages) {
@@ -99,11 +102,10 @@ export const useGameState = () => {
           ...prev,
           chatMessages: messages.map(msg => ({
             id: msg.id,
-            playerId: msg.player_id,
-            playerName: msg.players?.name || 'Unknown',
-            playerTeam: msg.players?.team || 'red',
+            username: msg.username,
+            team: msg.team,
             message: msg.message,
-            timestamp: new Date(msg.created_at),
+            timestamp: new Date(msg.timestamp).getTime(),
           })),
         }));
       }
@@ -118,16 +120,17 @@ export const useGameState = () => {
     fetchChatMessages();
   }, [fetchGameState, fetchChatMessages]);
 
-  const loginPlayer = useCallback(async (name: string, team: 'red' | 'blue') => {
+  const loginPlayer = useCallback(async (username: string, team: 'blue' | 'pink') => {
     try {
       const { data, error } = await supabase
         .from('players')
         .upsert({
-          name,
+          username,
           team,
-          actions_remaining: 3,
-          is_online: true,
+          actions_remaining: 5,
           last_action_time: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
+          game_id: 'game-2025-01',
         })
         .select()
         .single();
@@ -136,14 +139,24 @@ export const useGameState = () => {
 
       const player: Player = {
         id: data.id,
-        name: data.name,
+        username: data.username,
         team: data.team,
         actionsRemaining: data.actions_remaining,
-        lastActionTime: data.last_action_time ? new Date(data.last_action_time) : null,
-        isOnline: data.is_online,
+        lastActionTime: data.last_action_time ? new Date(data.last_action_time).getTime() : Date.now(),
+        lastSeen: data.last_seen ? new Date(data.last_seen).getTime() : Date.now(),
       };
 
       setCurrentPlayer(player);
+      
+      // Add player to game state
+      setGameState(prev => ({
+        ...prev,
+        players: {
+          ...prev.players,
+          [player.id]: player,
+        },
+      }));
+      
       return player;
     } catch (error) {
       console.error('Error logging in player:', error);
@@ -151,20 +164,26 @@ export const useGameState = () => {
     }
   }, []);
 
-  const claimTile = useCallback(async (tileId: number) => {
+  const claimTile = useCallback(async (x: number, y: number) => {
     if (!currentPlayer || currentPlayer.actionsRemaining <= 0) {
-      throw new Error('No actions remaining');
+      return false;
     }
 
     try {
-      // Update tile ownership
+      // Insert or update tile ownership
       const { error: tileError } = await supabase
         .from('tiles')
-        .update({
-          owned_by: currentPlayer.id,
+        .upsert({
+          x,
+          y,
+          owner: currentPlayer.team,
           claimed_at: new Date().toISOString(),
+          claimed_by: currentPlayer.username,
+          game_id: 'game-2025-01',
         })
-        .eq('id', tileId);
+        .eq('x', x)
+        .eq('y', y)
+        .eq('game_id', 'game-2025-01');
 
       if (tileError) throw tileError;
 
@@ -174,6 +193,7 @@ export const useGameState = () => {
         .update({
           actions_remaining: currentPlayer.actionsRemaining - 1,
           last_action_time: new Date().toISOString(),
+          last_seen: new Date().toISOString(),
         })
         .eq('id', currentPlayer.id);
 
@@ -183,12 +203,38 @@ export const useGameState = () => {
       setCurrentPlayer(prev => prev ? {
         ...prev,
         actionsRemaining: prev.actionsRemaining - 1,
-        lastActionTime: new Date(),
+        lastActionTime: Date.now(),
+        lastSeen: Date.now(),
       } : null);
 
+      // Update game state
+      setGameState(prev => ({
+        ...prev,
+        tiles: {
+          ...prev.tiles,
+          [`${x}-${y}`]: {
+            x,
+            y,
+            owner: currentPlayer.team,
+            claimedAt: Date.now(),
+            claimedBy: currentPlayer.username,
+          },
+        },
+        players: {
+          ...prev.players,
+          [currentPlayer.id]: {
+            ...prev.players[currentPlayer.id],
+            actionsRemaining: currentPlayer.actionsRemaining - 1,
+            lastActionTime: Date.now(),
+            lastSeen: Date.now(),
+          },
+        },
+      }));
+
+      return true;
     } catch (error) {
       console.error('Error claiming tile:', error);
-      throw error;
+      return false;
     }
   }, [currentPlayer]);
 
@@ -199,44 +245,38 @@ export const useGameState = () => {
       const { error } = await supabase
         .from('chat_messages')
         .insert({
-          player_id: currentPlayer.id,
+          username: currentPlayer.username,
+          team: currentPlayer.team,
           message,
+          game_id: 'game-2025-01',
         });
 
       if (error) throw error;
     } catch (error) {
       console.error('Error sending chat message:', error);
-      throw error;
     }
   }, [currentPlayer]);
 
   const getTeamScores = useCallback(() => {
-    const redScore = gameState.tiles.filter(tile => {
-      const player = gameState.players.find(p => p.id === tile.ownedBy);
-      return player?.team === 'red';
-    }).length;
+    const tiles = Object.values(gameState.tiles);
+    const blueScore = tiles.filter(tile => tile.owner === 'blue').length;
+    const pinkScore = tiles.filter(tile => tile.owner === 'pink').length;
 
-    const blueScore = gameState.tiles.filter(tile => {
-      const player = gameState.players.find(p => p.id === tile.ownedBy);
-      return player?.team === 'blue';
-    }).length;
+    return { blue: blueScore, pink: pinkScore };
+  }, [gameState.tiles]);
 
-    return { red: redScore, blue: blueScore };
-  }, [gameState.tiles, gameState.players]);
-
-  const getTeamMembers = useCallback((team: 'red' | 'blue') => {
-    return gameState.players.filter(player => player.team === team);
+  const getTeamMembers = useCallback((team: 'blue' | 'pink') => {
+    return Object.values(gameState.players).filter(player => player.team === team);
   }, [gameState.players]);
 
   const isGameActive = useCallback(() => {
-    return gameState.isActive;
-  }, [gameState.isActive]);
+    const now = Date.now();
+    return now < gameState.gameEndTime;
+  }, [gameState.gameEndTime]);
 
   const getTimeRemaining = useCallback(() => {
-    if (!gameState.gameEndTime) return null;
-    
-    const now = new Date();
-    const timeLeft = gameState.gameEndTime.getTime() - now.getTime();
+    const now = Date.now();
+    const timeLeft = gameState.gameEndTime - now;
     
     if (timeLeft <= 0) return null;
     
@@ -248,11 +288,11 @@ export const useGameState = () => {
   }, [gameState.gameEndTime]);
 
   const formatActionRefillTime = useCallback(() => {
-    if (!currentPlayer?.lastActionTime) return null;
+    if (!currentPlayer?.lastActionTime || currentPlayer.actionsRemaining >= 5) return null;
     
-    const nextRefill = new Date(currentPlayer.lastActionTime.getTime() + 10 * 60 * 1000); // 10 minutes
-    const now = new Date();
-    const timeLeft = nextRefill.getTime() - now.getTime();
+    const nextRefill = currentPlayer.lastActionTime + (12 * 60 * 1000); // 12 minutes (5 actions per hour)
+    const now = Date.now();
+    const timeLeft = nextRefill - now;
     
     if (timeLeft <= 0) return null;
     
@@ -260,7 +300,7 @@ export const useGameState = () => {
     const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
     
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-  }, [currentPlayer?.lastActionTime]);
+  }, [currentPlayer?.lastActionTime, currentPlayer?.actionsRemaining]);
 
   return {
     gameState,

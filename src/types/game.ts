@@ -26,7 +26,7 @@ export interface ChatMessage {
 export interface GameState {
   tiles: Record<string, GameTile>;
   players: Record<string, Player>;
-  chat: ChatMessage[];
+  chatMessages: ChatMessage[];
   gameEndTime: number;
   gameStartTime: number;
   gameId: string;

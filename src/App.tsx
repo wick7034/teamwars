@@ -65,7 +65,7 @@ function App() {
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
                 <Users className="w-4 h-4 text-gray-600" />
-                <span className="text-sm text-gray-600">{Object.keys(gameState.players).length} players</span>
+                <span className="text-sm text-gray-600">{Object.values(gameState.players).length} players</span>
               </div>
               <div className="text-right">
                 <p className="text-sm text-gray-600">Logged in as</p>
@@ -116,7 +116,7 @@ function App() {
 
             <div className="h-96">
               <Chat
-                messages={gameState.chat}
+                messages={gameState.chatMessages}
                 onSendMessage={sendChatMessage}
                 currentPlayerTeam={currentPlayer.team}
               />
