@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useGameState } from './hooks/useGameState';
 import { AuthModal } from './components/AuthModal';
 import { GameBoard } from './components/GameBoard';
