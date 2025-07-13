@@ -172,7 +172,7 @@ export const useGameState = () => {
     try {
       // Insert or update tile ownership
       const { error: tileError } = await supabase
-        .from('tiles')
+        .from('game_tiles')
         .upsert({
           x,
           y,
