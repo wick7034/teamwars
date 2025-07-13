@@ -122,28 +122,55 @@ export const useGameState = () => {
 
   const loginPlayer = useCallback(async (username: string, team: 'blue' | 'pink') => {
     try {
-      const { data, error } = await supabase
+      // First check if player already exists
+      const { data: existingPlayer } = await supabase
         .from('players')
-        .upsert({
-          username,
-          team,
-          actions_remaining: 5,
-          last_action_time: new Date().toISOString(),
-          last_seen: new Date().toISOString(),
-          game_id: 'game-2025-01',
-        })
-        .select()
+        .select('*')
+        .eq('username', username)
+        .eq('game_id', 'game-2025-01')
         .single();
 
-      if (error) throw error;
+      let playerData;
+      
+      if (existingPlayer) {
+        // Update existing player's last_seen
+        const { data, error } = await supabase
+          .from('players')
+          .update({
+            last_seen: new Date().toISOString(),
+          })
+          .eq('id', existingPlayer.id)
+          .select()
+          .single();
+
+        if (error) throw error;
+        playerData = data;
+      } else {
+        // Create new player
+        const { data, error } = await supabase
+          .from('players')
+          .insert({
+            username,
+            team,
+            actions_remaining: 5,
+            last_action_time: new Date().toISOString(),
+            last_seen: new Date().toISOString(),
+            game_id: 'game-2025-01',
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        playerData = data;
+      }
 
       const player: Player = {
-        id: data.id,
-        username: data.username,
-        team: data.team,
-        actionsRemaining: data.actions_remaining,
-        lastActionTime: data.last_action_time ? new Date(data.last_action_time).getTime() : Date.now(),
-        lastSeen: data.last_seen ? new Date(data.last_seen).getTime() : Date.now(),
+        id: playerData.id,
+        username: playerData.username,
+        team: playerData.team,
+        actionsRemaining: playerData.actions_remaining,
+        lastActionTime: playerData.last_action_time ? new Date(playerData.last_action_time).getTime() : Date.now(),
+        lastSeen: playerData.last_seen ? new Date(playerData.last_seen).getTime() : Date.now(),
       };
 
       setCurrentPlayer(player);
@@ -277,14 +304,7 @@ export const useGameState = () => {
   const getTimeRemaining = useCallback(() => {
     const now = Date.now();
     const timeLeft = gameState.gameEndTime - now;
-    
-    if (timeLeft <= 0) return null;
-    
-    const hours = Math.floor(timeLeft / (1000 * 60 * 60));
-    const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((timeLeft % (1000 * 60)) / 1000);
-    
-    return { hours, minutes, seconds };
+    return Math.max(0, timeLeft);
   }, [gameState.gameEndTime]);
 
   const formatActionRefillTime = useCallback(() => {

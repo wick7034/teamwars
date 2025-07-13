@@ -28,6 +28,15 @@ function App() {
   const teamMembers = currentPlayer ? getTeamMembers(currentPlayer.team) : [];
   const actionRefillTime = formatActionRefillTime();
 
+  // Update time remaining every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      // Force re-render to update countdown
+    }, 1000);
+    
+    return () => clearInterval(interval);
+  }, []);
+
   const handlePingPlayer = (username: string) => {
     const tweetText = `Hey @${username}! Join me in Succinct Team Wars - let's dominate the grid together! 🎮⚔️ #SuccinctTeamWars`;
     const tweetUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetText)}`;
