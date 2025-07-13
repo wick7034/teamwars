@@ -37,7 +37,7 @@ export const TeamMembers: React.FC<TeamMembersProps> = ({
       <div className="flex items-center space-x-2 mb-4">
         <Users className="w-5 h-5 text-pink-600" />
         <h3 className="font-semibold text-gray-800">
-          Team {currentPlayerTeam ? currentPlayerTeam.charAt(0).toUpperCase() + currentPlayerTeam.slice(1) : 'Members'}
+          Team {currentPlayerTeam.charAt(0).toUpperCase() + currentPlayerTeam.slice(1)} Members
         </h3>
         <span className="text-sm text-gray-500">({teamMembers.length})</span>
       </div>
